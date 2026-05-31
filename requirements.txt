@@ -1,0 +1,4 @@
+# Recommended GUI stack for the portable annotation tool.
+# Use opencv-python-headless to avoid OpenCV's bundled Qt plugins conflicting with PySide/PyQt.
+PySide6>=6.5
+opencv-python-headless>=4.8

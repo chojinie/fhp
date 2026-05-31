@@ -1,0 +1,29 @@
+﻿# Raw / recorded videos
+Rset/
+Lset/
+
+# Annotation outputs
+annotations/
+
+# Video files, just in case
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.m4v
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs / backups
+*.log
+*_backup_*.csv
+*_edit_backup_*.csv
