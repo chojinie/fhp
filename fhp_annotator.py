@@ -31,8 +31,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-APP_VERSION = "v5.9"
-APP_TITLE = f"FHP Annotator GUI - {APP_VERSION}"
+APP_VERSION = "v6.0 AUTOFILL ACTOR/ACTION FROM FILENAME"
+APP_TITLE = f"FHP GUI - {APP_VERSION}"
 
 
 # ============================================================
@@ -701,24 +701,52 @@ def normalize_video_stem(stem: str) -> List[str]:
 
 
 def parse_metadata_from_filename(video_path: str) -> dict:
+    """Parse subject/action/view metadata from the video filename and path.
+
+    Supported filename styles:
+      - S01_A01_YR0.mp4
+      - S03_A01_YL0.mp4
+      - S04_A03_YL45.mp4
+      - S01_act01_Rset_yR90.mp4
+      - act01_yR90.mp4
+
+    The first subject token Sxx is used as actor_id.
+    The first action token Axx or actxx is used as session_id/action_id.
+    """
     video_id = os.path.basename(video_path)
     stem = os.path.splitext(video_id)[0]
-    tokens = normalize_video_stem(stem)
+
+    # Use both filename tokens and path components, so S01/A01 can also be
+    # detected if the user later creates subject/action folders.
+    path_parts = list(Path(os.path.abspath(video_path)).parts)
+    raw_tokens = []
+    for part in path_parts + [stem]:
+        raw_tokens.extend([t for t in re.split(r'[^A-Za-z0-9]+', os.path.splitext(part)[0]) if t])
+    tokens = raw_tokens or normalize_video_stem(stem)
+
     meta = {"video_id": video_id, "actor_id": "", "session_id": "", "yaw_label": "", "framing": ""}
 
-    # v4.5 naming convention:
-    #   actor_id   = subject/person id, e.g. S01
-    #   session_id = action/clip id, e.g. act01
-    #   CSV file   = S01_act01_multi_view.csv
-    if tokens and re.match(r"^S\d+", tokens[0], re.IGNORECASE):
-        meta["actor_id"] = tokens[0].upper()
-
+    # actor_id = subject/person id, e.g. S01. Use the first Sxx token found.
     for t in tokens:
-        m = re.match(r"^(act\d+)$", t, re.IGNORECASE)
+        m = re.match(r"^S(\d+)$", t, re.IGNORECASE)
         if m:
-            meta["session_id"] = m.group(1).lower()
+            meta["actor_id"] = f"S{int(m.group(1)):02d}"
             break
 
+    # session_id = action id. Support both the new A01 convention and the
+    # older act01 convention.
+    for t in tokens:
+        m = re.match(r"^A(\d+)$", t, re.IGNORECASE)
+        if m:
+            meta["session_id"] = f"A{int(m.group(1)):02d}"
+            break
+        m = re.match(r"^act(\d+)$", t, re.IGNORECASE)
+        if m:
+            meta["session_id"] = f"act{int(m.group(1)):02d}"
+            break
+
+    # yaw labels. Prefer explicit YR0/YL0 when present. Y0 is still accepted
+    # and will be converted to YR0/YL0 at save-time using the Rset/Lset context.
     for t in tokens:
         tt = t.upper()
         if tt in YAW_DEG_MAP:
@@ -1116,21 +1144,26 @@ def compact_saved_rows_preview(rows: List[Dict[str, object]], max_items: int = 3
 
 
 def _extract_action_id_from_paths(paths: List[str]) -> str:
-    """Infer a common action/clip id such as act01 from multiview filenames."""
+    """Infer a common action/clip id such as A01 or act01 from filenames/paths."""
     for p in paths:
         if not p:
             continue
         stem = os.path.splitext(os.path.basename(p))[0]
-        # Examples: act01_y0, S01_act01_y0, S01_A01_act01_YR45
-        m = re.search(r"(act\d+)", stem, re.IGNORECASE)
-        if m:
-            return m.group(1).lower()
+        parts = list(Path(os.path.abspath(p)).parts) + [stem]
+        for part in parts:
+            for token in [t for t in re.split(r'[^A-Za-z0-9]+', os.path.splitext(part)[0]) if t]:
+                m = re.match(r"^A(\d+)$", token, re.IGNORECASE)
+                if m:
+                    return f"A{int(m.group(1)):02d}"
+                m = re.match(r"^act(\d+)$", token, re.IGNORECASE)
+                if m:
+                    return f"act{int(m.group(1)):02d}"
     valid = [p for p in paths if p]
     if valid:
         stem = os.path.splitext(os.path.basename(valid[0]))[0]
         # Fallback: remove common yaw suffixes from the first camera name.
-        stem = re.sub(r"_(Y0|YL45|YR45|YL90|YR90)$", "", stem, flags=re.IGNORECASE)
-        return stem.lower()
+        stem = re.sub(r"_(YR0|YL0|Y0|YL45|YR45|YL90|YR90)$", "", stem, flags=re.IGNORECASE)
+        return stem
     return "multiview"
 
 
@@ -1357,11 +1390,15 @@ def normalize_actor_id(actor_id: str) -> str:
 def normalize_session_id(session_id: str) -> str:
     """Normalize action/clip id for filenames and CSV rows.
 
-    Convention: session_id means action id, e.g. act01.
+    Convention: session_id means action id. The current preferred notation is
+    A01, A02, ... but the older act01 notation is still supported.
     """
     value = (session_id or "").strip()
     if not value:
         return ""
+    m = re.match(r"^A(\d+)$", value, re.IGNORECASE)
+    if m:
+        return f"A{int(m.group(1)):02d}"
     m = re.match(r"^act(\d+)$", value, re.IGNORECASE)
     if m:
         return f"act{int(m.group(1)):02d}"
@@ -2794,6 +2831,17 @@ class AnnotationApp(QMainWindow):
             self._remember_dir("last_video_dir", p)
         for i, p in enumerate(paths[:3]):
             self._load_cam(i, p)
+        # v6.0 safety: if metadata fields are still empty, infer from all selected
+        # paths. This catches filenames/folders where S01/A01 are not on the first
+        # loaded camera but appear elsewhere in the selected set.
+        if not self._get_field("actor_id"):
+            inferred_actor = normalize_actor_id(_extract_subject_id_from_paths(paths[:3]))
+            if inferred_actor:
+                self._set_field("actor_id", inferred_actor)
+        if not self._get_field("session_id"):
+            inferred_session = normalize_session_id(_extract_action_id_from_paths(paths[:3]))
+            if inferred_session and inferred_session != "multiview":
+                self._set_field("session_id", inferred_session)
         # v4.4: suggest the posture-specific annotation CSV path, but do not create
         # the CSV file until the user explicitly presses Save / Ctrl+S.
         suggested_csv = self._suggested_csv_path_for_current_state()
@@ -2878,10 +2926,13 @@ class AnnotationApp(QMainWindow):
         self._set_field(f"cam{idx+1}_device", defaults["device"])
         self._set_field(f"cam{idx+1}_framing", meta.get("framing") or defaults["framing"])
 
+        # v6.0: automatically fill required metadata from the first loaded
+        # video filename, e.g. S01_A01_YR0.mp4 -> actor_id=S01, session_id=A01.
+        # Do not overwrite a value the user already typed manually.
         if meta.get("session_id") and not self._get_field("session_id"):
-            self._set_field("session_id", meta["session_id"])
+            self._set_field("session_id", normalize_session_id(meta["session_id"]))
         if meta.get("actor_id") and not self._get_field("actor_id"):
-            self._set_field("actor_id", meta["actor_id"])
+            self._set_field("actor_id", normalize_actor_id(meta["actor_id"]))
         self.show_frame(idx, 0)
 
     # --------------------------------------------------------
