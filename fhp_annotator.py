@@ -31,7 +31,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-APP_VERSION = "v6.0 AUTOFILL ACTOR/ACTION FROM FILENAME"
+APP_VERSION = "v6.4 FIX SUBJECT TOKEN REFRESH"
 APP_TITLE = f"FHP GUI - {APP_VERSION}"
 
 
@@ -139,7 +139,7 @@ def _load_qt_binding():
         try:
             if name == "pyside6":
                 from PySide6.QtCore import Qt, QTimer, QEvent  # type: ignore
-                from PySide6.QtGui import QImage, QPixmap, QKeySequence  # type: ignore
+                from PySide6.QtGui import QImage, QPixmap, QPainter, QKeySequence  # type: ignore
                 try:
                     from PySide6.QtGui import QShortcut  # type: ignore
                 except Exception:
@@ -150,11 +150,11 @@ def _load_qt_binding():
                     QMessageBox, QHBoxLayout, QVBoxLayout, QGridLayout,
                     QGroupBox, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QHeaderView,
                 )
-                return "PySide6", Qt, QTimer, QEvent, QImage, QPixmap, QShortcut, QKeySequence, QApplication, QMainWindow, QWidget, QLabel, QPushButton, QComboBox, QLineEdit, QCheckBox, QSlider, QFileDialog, QMessageBox, QHBoxLayout, QVBoxLayout, QGridLayout, QGroupBox, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QHeaderView
+                return "PySide6", Qt, QTimer, QEvent, QImage, QPixmap, QPainter, QShortcut, QKeySequence, QApplication, QMainWindow, QWidget, QLabel, QPushButton, QComboBox, QLineEdit, QCheckBox, QSlider, QFileDialog, QMessageBox, QHBoxLayout, QVBoxLayout, QGridLayout, QGroupBox, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QHeaderView
 
             if name == "pyqt6":
                 from PyQt6.QtCore import Qt, QTimer, QEvent  # type: ignore
-                from PyQt6.QtGui import QImage, QPixmap, QKeySequence  # type: ignore
+                from PyQt6.QtGui import QImage, QPixmap, QPainter, QKeySequence  # type: ignore
                 try:
                     from PyQt6.QtGui import QShortcut  # type: ignore
                 except Exception:
@@ -165,11 +165,11 @@ def _load_qt_binding():
                     QMessageBox, QHBoxLayout, QVBoxLayout, QGridLayout,
                     QGroupBox, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QHeaderView,
                 )
-                return "PyQt6", Qt, QTimer, QEvent, QImage, QPixmap, QShortcut, QKeySequence, QApplication, QMainWindow, QWidget, QLabel, QPushButton, QComboBox, QLineEdit, QCheckBox, QSlider, QFileDialog, QMessageBox, QHBoxLayout, QVBoxLayout, QGridLayout, QGroupBox, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QHeaderView
+                return "PyQt6", Qt, QTimer, QEvent, QImage, QPixmap, QPainter, QShortcut, QKeySequence, QApplication, QMainWindow, QWidget, QLabel, QPushButton, QComboBox, QLineEdit, QCheckBox, QSlider, QFileDialog, QMessageBox, QHBoxLayout, QVBoxLayout, QGridLayout, QGroupBox, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QHeaderView
 
             if name == "pyqt5":
                 from PyQt5.QtCore import Qt, QTimer, QEvent  # type: ignore
-                from PyQt5.QtGui import QImage, QPixmap, QKeySequence  # type: ignore
+                from PyQt5.QtGui import QImage, QPixmap, QPainter, QKeySequence  # type: ignore
                 try:
                     from PyQt5.QtWidgets import QShortcut  # type: ignore
                 except Exception:
@@ -180,7 +180,7 @@ def _load_qt_binding():
                     QMessageBox, QHBoxLayout, QVBoxLayout, QGridLayout,
                     QGroupBox, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QHeaderView,
                 )
-                return "PyQt5", Qt, QTimer, QEvent, QImage, QPixmap, QShortcut, QKeySequence, QApplication, QMainWindow, QWidget, QLabel, QPushButton, QComboBox, QLineEdit, QCheckBox, QSlider, QFileDialog, QMessageBox, QHBoxLayout, QVBoxLayout, QGridLayout, QGroupBox, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QHeaderView
+                return "PyQt5", Qt, QTimer, QEvent, QImage, QPixmap, QPainter, QShortcut, QKeySequence, QApplication, QMainWindow, QWidget, QLabel, QPushButton, QComboBox, QLineEdit, QCheckBox, QSlider, QFileDialog, QMessageBox, QHBoxLayout, QVBoxLayout, QGridLayout, QGroupBox, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QHeaderView
         except Exception as exc:
             errors.append(f"{name}: {exc}")
 
@@ -255,7 +255,7 @@ def print_startup_diagnostics() -> None:
 
 configure_qt_environment()
 (
-    QT_API, Qt, QTimer, QEvent, QImage, QPixmap, QShortcut, QKeySequence,
+    QT_API, Qt, QTimer, QEvent, QImage, QPixmap, QPainter, QShortcut, QKeySequence,
     QApplication, QMainWindow, QWidget, QLabel, QPushButton,
     QComboBox, QLineEdit, QCheckBox, QSlider, QFileDialog,
     QMessageBox, QHBoxLayout, QVBoxLayout, QGridLayout,
@@ -302,8 +302,45 @@ def find_optional_header_logo_path() -> str:
     return ""
 
 
+def _env_float(name: str, default: float, lo: float, hi: float) -> float:
+    try:
+        value = float(os.environ.get(name, "").strip())
+        if math.isfinite(value):
+            return max(lo, min(hi, value))
+    except Exception:
+        pass
+    return default
+
+
+def make_translucent_scaled_pixmap(src_pixmap, target_w: int, target_h: int, opacity: float):
+    """Return a scaled copy of a logo pixmap with alpha applied.
+
+    This avoids requiring any external image processing dependency and works
+    across PySide6/PyQt6/PyQt5.
+    """
+    try:
+        if src_pixmap is None or src_pixmap.isNull():
+            return QPixmap()
+        target_w = max(1, int(target_w))
+        target_h = max(1, int(target_h))
+        opacity = max(0.0, min(1.0, float(opacity)))
+        scaled = src_pixmap.scaled(target_w, target_h, QT_KEEP_ASPECT_RATIO, QT_SMOOTH_TRANSFORMATION)
+        out = QPixmap(scaled.size())
+        out.fill(QT_TRANSPARENT)
+        painter = QPainter(out)
+        painter.setOpacity(opacity)
+        painter.drawPixmap(0, 0, scaled)
+        painter.end()
+        return out
+    except Exception:
+        return QPixmap()
+
+
+
 QT_KEEP_ASPECT_RATIO = _qt_enum(Qt, "AspectRatioMode", "KeepAspectRatio")
 QT_SMOOTH_TRANSFORMATION = _qt_enum(Qt, "TransformationMode", "SmoothTransformation")
+QT_TRANSPARENT = _qt_enum(Qt, "GlobalColor", "transparent")
+QT_WA_TRANSPARENT_FOR_MOUSE_EVENTS = _qt_enum(Qt, "WidgetAttribute", "WA_TransparentForMouseEvents")
 QIMAGE_FORMAT_RGB888 = _qimage_format_rgb888(QImage)
 
 
@@ -518,7 +555,7 @@ QUALITY_OPTIONS       = ["valid", "ambiguous", "invalid"]
 NUM_PERSONS_OPTIONS   = ["0", "1", "2", "3+", "unknown"]
 MULTI_PERSON_OPTIONS  = ["no", "yes", "unknown"]
 CAMERA_DEVICE_OPTIONS = ["unknown", "external_webcam", "desktop_external_webcam", "laptop_builtin", "windows_laptop_builtin", "macbook_builtin", "iphone", "ipad", "android_phone", "tablet"]
-FRAMING_OPTIONS       = ["F1_head_shoulder", "F2_chest", "F3_upper_body", "F4_pelvis_visible", "unknown"]
+FRAMING_OPTIONS       = ["F1_head_shoulder", "F2_chest", "F3_upper_body", "unknown"]
 YAW_OPTIONS           = ["", "YR0", "YL0", "Y0", "YL45", "YR45", "YL90", "YR90"]
 YAW_DEG_MAP           = {"Y0": 0, "YR0": 0, "YL0": 0, "YL45": -45, "YR45": 45, "YL90": -90, "YR90": 90}
 
@@ -527,10 +564,12 @@ YAW_DEG_MAP           = {"Y0": 0, "YR0": 0, "YL0": 0, "YL45": -45, "YR45": 45, "
 CAMERA_DEFAULTS_BY_INDEX = {
     0: {"device": "external_webcam", "framing": "F2_chest"},          # frontal desktop webcam
     1: {"device": "macbook_builtin", "framing": "F2_chest"},          # 45-degree MacBook view
-    2: {"device": "windows_laptop_builtin", "framing": "F3_upper_body"},  # 90-degree Windows laptop, pelvis visible
+    2: {"device": "windows_laptop_builtin", "framing": "F3_upper_body"},  # 90-degree Windows laptop, wider upper-body view
 }
 CAMERA_DEFAULTS_BY_YAW = {
     "Y0": {"device": "external_webcam", "framing": "F2_chest"},
+    "YR0": {"device": "external_webcam", "framing": "F2_chest"},
+    "YL0": {"device": "external_webcam", "framing": "F2_chest"},
     "YL45": {"device": "macbook_builtin", "framing": "F2_chest"},
     "YR45": {"device": "macbook_builtin", "framing": "F2_chest"},
     "YL90": {"device": "windows_laptop_builtin", "framing": "F3_upper_body"},
@@ -765,10 +804,9 @@ def parse_metadata_from_filename(video_path: str) -> dict:
 def ensure_csv_with_headers(csv_path: str):
     """Create or upgrade CSV with the current schema.
 
-    v5.6 adds `view_set` and `set_yaw_label` so a frontal Y0 row can be
-    identified as Rset/YR0 or Lset/YL0. If an older CSV exists without these
-    columns, preserve the rows, add blank values for the new columns, and write
-    a timestamped backup next to the original.
+    Ensures the CSV has the current schema. Older CSVs are backed up and
+    upgraded in-place when needed. Rows previously saved with frontal Y0 under
+    Rset/Lset CSV filenames are normalized to YR0/YL0.
     """
     os.makedirs(os.path.dirname(os.path.abspath(csv_path)), exist_ok=True)
 
@@ -1168,16 +1206,30 @@ def _extract_action_id_from_paths(paths: List[str]) -> str:
 
 
 def _extract_subject_id_from_paths(paths: List[str]) -> str:
-    """Infer subject id such as S01 from filenames or parent folders when available."""
+    """Infer subject id such as S01 from filenames or parent folders.
+
+    v6.4 fix:
+    The old implementation used ``\b(S\d+)\b``. In Python regex, underscore
+    is a word character, so filenames like ``S01_act03_yR0.mp4`` did NOT match
+    because there is no word boundary between ``1`` and ``_``. This made new
+    video sets lose ``actor_id`` and produced CSV names such as
+    ``act03_Rset_multi_view.csv`` instead of ``S01_act03_Rset_multi_view.csv``.
+
+    We now split every filename/path component on non-alphanumeric separators
+    and match full tokens, the same way action ids are parsed.
+    """
     for p in paths:
         if not p:
             continue
         parts = list(Path(os.path.abspath(p)).parts)
         parts.append(os.path.splitext(os.path.basename(p))[0])
         for part in parts:
-            m = re.search(r"\b(S\d+)\b", part, re.IGNORECASE)
-            if m:
-                return m.group(1).upper()
+            stem = os.path.splitext(str(part))[0]
+            tokens = [t for t in re.split(r'[^A-Za-z0-9]+', stem) if t]
+            for token in tokens:
+                m = re.match(r"^S(\d+)$", token, re.IGNORECASE)
+                if m:
+                    return f"S{int(m.group(1)):02d}"
     return ""
 
 
@@ -1406,17 +1458,12 @@ def normalize_session_id(session_id: str) -> str:
 
 
 def posture_to_annotation_subdir(posture: str) -> str:
-    """Map posture labels to exactly two annotation folders.
+    """Map an interval-level posture label to a binary folder name.
 
-    Dataset convention from v4.8:
-      - forward head posture labels -> annotations/fhp/
-      - all non-FHP labels          -> annotations/nhp/
-
-    This intentionally does NOT create annotations/looking_down or other posture
-    folders. The exact posture value is still preserved in the CSV row, so a row
-    can have posture=looking_down while being stored under annotations/nhp/.
-
-    The folder is only created on Save / Ctrl+S, not while loading videos.
+    This is now used only as a fallback when the source video folder does not
+    reveal whether the loaded clip belongs to an `fhp` or `nhp` capture group.
+    In the normal dataset tree, CSV routing is based on the source video folder
+    (`.../fhp/...` or `.../nhp/...`), not the posture dropdown.
     """
     value = (posture or "").strip().lower()
     if value in {"fhp", "forward_head_posture"}:
@@ -1424,18 +1471,69 @@ def posture_to_annotation_subdir(posture: str) -> str:
     return "nhp"
 
 
+def _infer_source_annotation_group_from_paths(paths: List[str]) -> str:
+    """Infer the CSV folder from the source video tree.
+
+    User's intended dataset semantics:
+      - The source folder `fhp`/`nhp` describes the capture group of the video set.
+      - The CSV row's `posture` column describes the actual labeled time segment.
+
+    Therefore a segment labeled `posture=fhp` inside an `nhp` source video must
+    still be appended to `annotations/nhp/<subject_action_set>_multi_view.csv`.
+
+    Returns:
+        "fhp"   when all loaded video paths belong to an fhp source folder
+        "nhp"   when all loaded video paths belong to an nhp source folder
+        "mixed" when loaded camera paths contain both source groups
+        ""      when the source group cannot be inferred
+    """
+    groups = set()
+    for p in paths:
+        if not p:
+            continue
+        try:
+            parts = [str(part).strip().lower() for part in Path(os.path.abspath(str(p))).parts]
+        except Exception:
+            parts = []
+        for part in parts:
+            # Match exact folder names only. This avoids treating `video_data_FHP`
+            # itself as an `fhp` source-group folder.
+            if part in {"fhp", "forward_head_posture"}:
+                groups.add("fhp")
+            elif part in {"nhp", "normal", "normal_head_posture"}:
+                groups.add("nhp")
+    if len(groups) == 1:
+        return next(iter(groups))
+    if len(groups) > 1:
+        return "mixed"
+    return ""
+
+
+def annotation_subdir_from_source_or_posture(paths: List[str], posture: str = "") -> str:
+    """Choose annotations/fhp or annotations/nhp.
+
+    Preferred rule: use the loaded videos' source folder (`fhp` or `nhp`).
+    Fallback rule: use the current posture dropdown only when no source folder
+    can be inferred, preserving compatibility with older flat folder layouts.
+    """
+    source_group = _infer_source_annotation_group_from_paths(paths)
+    if source_group in {"fhp", "nhp"}:
+        return source_group
+    return posture_to_annotation_subdir(posture)
+
+
 def default_csv_path(paths: List[str], actor_id: str = "", session_id: str = "", posture: str = "", view_set: str = "") -> str:
     valid = [p for p in paths if p]
     base_dir = _infer_annotation_root_dir(valid)
-    posture_dir = posture_to_annotation_subdir(posture)
-    ann_dir = os.path.join(base_dir, "annotations", posture_dir)
-    # Do not create the annotations folder here. v4.4+ creates files/folders
-    # only when the user explicitly saves with Save / Ctrl+S.
+    annotation_group = annotation_subdir_from_source_or_posture(valid, posture)
+    ann_dir = os.path.join(base_dir, "annotations", annotation_group)
+    # Do not create the annotations folder here. Files/folders are created only
+    # when the user explicitly saves with Save / Ctrl+S.
 
-    # v5.4 right/left split multiview naming:
+    # v6.1 source-folder routing:
     #   actor_id   = subject/person id, e.g. S01
     #   session_id = action/clip id, e.g. act01
-    #   posture    = fhp -> annotations/fhp, everything else -> annotations/nhp
+    #   annotation folder = source video folder fhp/nhp, not posture dropdown
     #   view_set   = Rset or Lset inferred from loaded yaw views
     #   filename   = S01_act01_Rset_multi_view.csv or S01_act01_Lset_multi_view.csv
     actor_id = normalize_actor_id(actor_id or _extract_subject_id_from_paths(valid))
@@ -2140,6 +2238,86 @@ class AnnotationApp(QMainWindow):
         except Exception:
             self.resize(1500, 850)
 
+    def _init_background_watermark(self, central_widget) -> None:
+        """Add an optional semi-transparent logo watermark over the GUI.
+
+        The watermark is mouse-transparent, so it never blocks buttons,
+        sliders, table editing, or video preview double-clicks. The asset is
+        optional; if it is missing, the GUI runs normally without it.
+
+        Put the image at assets/eccv_logo.png next to the script, or set:
+            FHP_HEADER_LOGO=/path/to/eccv_logo.png
+
+        Tuning options:
+            FHP_LOGO_OPACITY=0.07
+            FHP_LOGO_SCALE=0.42
+        """
+        self.background_logo_label = None
+        self.background_logo_pixmap = None
+        self.background_logo_path = ""
+        try:
+            logo_path = find_optional_header_logo_path()
+            if not logo_path:
+                return
+            pix = QPixmap(logo_path)
+            if pix.isNull():
+                return
+            self.background_logo_path = logo_path
+            self.background_logo_pixmap = pix
+            label = QLabel(central_widget)
+            label.setObjectName("backgroundLogoWatermark")
+            label.setAlignment(QT_ALIGN_CENTER)
+            label.setStyleSheet("background: transparent;")
+            label.setToolTip("Optional semi-transparent background logo watermark")
+            try:
+                label.setAttribute(QT_WA_TRANSPARENT_FOR_MOUSE_EVENTS, True)
+            except Exception:
+                pass
+            try:
+                label.setSizePolicy(SP_IGNORED, SP_IGNORED)
+            except Exception:
+                pass
+            self.background_logo_label = label
+            self._update_background_watermark()
+            print(f"[startup] Background logo watermark: {logo_path}")
+        except Exception as exc:
+            print(f"[startup] Background logo watermark disabled: {exc}")
+            self.background_logo_label = None
+            self.background_logo_pixmap = None
+
+    def _update_background_watermark(self) -> None:
+        try:
+            label = getattr(self, "background_logo_label", None)
+            src = getattr(self, "background_logo_pixmap", None)
+            central = self.centralWidget()
+            if label is None or src is None or central is None or src.isNull():
+                return
+            cw = max(1, central.width())
+            ch = max(1, central.height())
+            label.setGeometry(0, 0, cw, ch)
+
+            scale = _env_float("FHP_LOGO_SCALE", 0.42, 0.12, 0.85)
+            opacity = _env_float("FHP_LOGO_OPACITY", 0.075, 0.0, 0.35)
+            target_w = int(cw * scale)
+            target_h = int(ch * scale)
+            pix = make_translucent_scaled_pixmap(src, target_w, target_h, opacity)
+            if not pix.isNull():
+                label.setPixmap(pix)
+                label.show()
+                # Use a mouse-transparent overlay so the watermark remains
+                # visible even though most child widgets have solid backgrounds.
+                # It does not intercept clicks or keyboard focus.
+                label.raise_()
+        except Exception:
+            pass
+
+    def resizeEvent(self, event):
+        try:
+            super().resizeEvent(event)
+        except Exception:
+            pass
+        self._update_background_watermark()
+
     def _safe_resize_like_maximized(self):
         """Pseudo-maximize without asking Wayland for native maximized state.
 
@@ -2308,6 +2486,7 @@ class AnnotationApp(QMainWindow):
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
+        self._init_background_watermark(central)
         root = QVBoxLayout(central)
         m = max(4, int(round(6 * self.ui_scale)))
         root.setContentsMargins(m, m, m, m)
@@ -2331,25 +2510,9 @@ class AnnotationApp(QMainWindow):
         top.addWidget(QLabel("CSV path:"))
         top.addWidget(self.edit_csv, stretch=1)
 
-        # Optional header logo. This is intentionally non-fatal:
-        # if assets/eccv_logo.png is absent, the UI remains unchanged.
-        self.header_logo_label = QLabel()
-        self.header_logo_label.setObjectName("headerLogo")
-        self.header_logo_label.setToolTip("Optional header logo. Put assets/eccv_logo.png next to this script, or set FHP_HEADER_LOGO.")
-        self.header_logo_label.setAlignment(QT_ALIGN_CENTER)
-        try:
-            logo_path = find_optional_header_logo_path()
-            if logo_path:
-                pix = QPixmap(logo_path)
-                if not pix.isNull():
-                    max_h = max(24, int(round(30 * self.ui_scale)))
-                    self.header_logo_label.setPixmap(pix.scaledToHeight(max_h))
-                    self.header_logo_label.setMinimumWidth(max(70, int(round(96 * self.ui_scale))))
-                    top.addWidget(self.header_logo_label)
-            else:
-                self.header_logo_label.hide()
-        except Exception:
-            self.header_logo_label.hide()
+        # v6.2: ECCV/logo asset is now shown as a semi-transparent
+        # background watermark instead of a small header icon. This keeps the
+        # top toolbar compact while preserving the original visual identity.
 
         root.addWidget(self.top_panel)
 
@@ -2551,7 +2714,7 @@ class AnnotationApp(QMainWindow):
 
         # v4.2: camera_device and framing are per-camera fields, not common fields.
         # In this capture setup, the frontal/45-degree views are chest-level,
-        # while the 90-degree view includes the pelvis. The camera hardware also
+        # while the 90-degree view uses a wider upper-body framing. The camera hardware also
         # differs across views. Each row in the CSV stores its own camera metadata.
         for i in range(3):
             add_combo(f"cam{i+1}_device", f"cam{i+1}_device", row, CAMERA_DEVICE_OPTIONS); row += 1
@@ -2599,6 +2762,7 @@ class AnnotationApp(QMainWindow):
             "After typing metadata, press Enter to return to shortcuts\n"
             "Per-cam metadata: device/framing/yaw are saved per camera row\n"
             "CSV file is created only by Save / Ctrl+S\n"
+            "CSV folder follows source video folder fhp/nhp, not posture dropdown\n"
             "Saved row fix: double-click CSV cell to edit; or Apply Metadata / Delete Rows"
         ))
         form.addWidget(help_grp)
@@ -2748,6 +2912,81 @@ class AnnotationApp(QMainWindow):
         return existing_dir_or_default(current or self.last_csv_dir)
 
     # --------------------------------------------------------
+    # Video-set metadata refresh
+    # --------------------------------------------------------
+    def _metadata_from_paths(self, paths: List[str]) -> Dict[str, str]:
+        """Infer actor/action metadata from currently loaded or newly selected videos.
+
+        v6.4 uses the same robust filename parser used during camera loading so
+        ``S01_act03_yR0.mp4`` reliably becomes actor_id=S01, session_id=act03.
+        This prevents a new action set from being suggested/saved as
+        ``act03_Rset_multi_view.csv`` with the subject prefix missing.
+        """
+        valid = [p for p in paths if p]
+        actor = ""
+        session = ""
+        for p in valid:
+            try:
+                meta = parse_metadata_from_filename(p)
+            except Exception:
+                meta = {}
+            if not actor and meta.get("actor_id"):
+                actor = normalize_actor_id(meta.get("actor_id", ""))
+            if not session and meta.get("session_id"):
+                session = normalize_session_id(meta.get("session_id", ""))
+            if actor and session:
+                break
+        if not actor:
+            actor = normalize_actor_id(_extract_subject_id_from_paths(valid))
+        if not session:
+            session = normalize_session_id(_extract_action_id_from_paths(valid))
+        return {"actor_id": actor, "session_id": session}
+
+    def _refresh_actor_action_from_paths(self, paths: List[str], force: bool = True) -> bool:
+        """Update actor_id/session_id fields from video filenames.
+
+        If force=True, explicit metadata in the loaded video names wins over
+        whatever was left in the UI from the previous action. This is the desired
+        dataset workflow: loading S01_act02_* should immediately switch the CSV
+        target from S01_act01_* to S01_act02_*.
+        """
+        meta = self._metadata_from_paths(paths)
+        changed = False
+        actor = meta.get("actor_id", "")
+        session = meta.get("session_id", "")
+        if actor and (force or not self._get_field("actor_id")):
+            if self._get_field("actor_id") != actor:
+                self._set_field("actor_id", actor)
+                changed = True
+        if session and session != "multiview" and (force or not self._get_field("session_id")):
+            if self._get_field("session_id") != session:
+                self._set_field("session_id", session)
+                changed = True
+        if changed:
+            print(f"[metadata refresh] actor_id={self._get_field('actor_id')} | session_id={self._get_field('session_id')}")
+        return changed
+
+    def _refresh_suggested_csv_path(self, summary_prefix: str = "CSV target refreshed") -> str:
+        """Recompute and display the automatic CSV target for the current video set."""
+        suggested_csv = self._suggested_csv_path_for_current_state()
+        self.csv_path_manually_selected = False
+        self.edit_csv.setText(suggested_csv)
+        self._remember_dir("last_csv_dir", suggested_csv)
+        if os.path.exists(suggested_csv):
+            self._refresh_full_csv_preview_from_disk(suggested_csv, summary_prefix=summary_prefix)
+        else:
+            try:
+                self.save_log_preview.set_rows(
+                    [],
+                    [],
+                    summary=f"CSV will be created on Save / Ctrl+S → {suggested_csv}",
+                    csv_path="",
+                )
+            except Exception:
+                pass
+        return suggested_csv
+
+    # --------------------------------------------------------
     # CSV path suggestion
     # --------------------------------------------------------
     def _suggested_csv_path_for_current_state(self) -> str:
@@ -2759,11 +2998,13 @@ class AnnotationApp(QMainWindow):
         )
 
     def _posture_changed_update_suggested_csv_path(self, *_args) -> None:
-        """Update the displayed CSV target when the user switches normal/fhp.
+        """Refresh the displayed CSV target after posture changes.
 
-        Manual CSV selection is respected. The file/folder is still not created
-        until Save / Ctrl+S. This only changes the visible suggested path and
-        preview target so FHP labels go to annotations/fhp and all non-FHP labels go to annotations/nhp.
+        v6.1: In the normal nested dataset tree, the CSV target is based on the
+        source video folder (`fhp`/`nhp`), so changing the posture dropdown should
+        NOT split one clip's timeline across different CSV files. This method is
+        kept to refresh the preview/fallback path, but the route stays stable
+        when source folders are available.
         """
         if getattr(self, "csv_path_manually_selected", False):
             return
@@ -2781,7 +3022,7 @@ class AnnotationApp(QMainWindow):
                     [],
                     summary=(
                         f"CSV will be created on Save / Ctrl+S → {suggested_csv} "
-                        f"[{self._get_field('posture')} → annotations/{posture_to_annotation_subdir(self._get_field('posture'))}/]"
+                        f"[source folder route: annotations/{annotation_subdir_from_source_or_posture([c.path for c in self.cams], self._get_field('posture'))}/]"
                     ),
                     csv_path="",
                 )
@@ -2827,39 +3068,16 @@ class AnnotationApp(QMainWindow):
         )
         if not paths:
             return
-        for p in paths[:3]:
+        selected = paths[:3]
+        for p in selected:
             self._remember_dir("last_video_dir", p)
-        for i, p in enumerate(paths[:3]):
-            self._load_cam(i, p)
-        # v6.0 safety: if metadata fields are still empty, infer from all selected
-        # paths. This catches filenames/folders where S01/A01 are not on the first
-        # loaded camera but appear elsewhere in the selected set.
-        if not self._get_field("actor_id"):
-            inferred_actor = normalize_actor_id(_extract_subject_id_from_paths(paths[:3]))
-            if inferred_actor:
-                self._set_field("actor_id", inferred_actor)
-        if not self._get_field("session_id"):
-            inferred_session = normalize_session_id(_extract_action_id_from_paths(paths[:3]))
-            if inferred_session and inferred_session != "multiview":
-                self._set_field("session_id", inferred_session)
-        # v4.4: suggest the posture-specific annotation CSV path, but do not create
-        # the CSV file until the user explicitly presses Save / Ctrl+S.
-        suggested_csv = self._suggested_csv_path_for_current_state()
-        self.csv_path_manually_selected = False
-        self.edit_csv.setText(suggested_csv)
-        self._remember_dir("last_csv_dir", suggested_csv)
-        if os.path.exists(suggested_csv):
-            self._refresh_full_csv_preview_from_disk(suggested_csv, summary_prefix="Loaded existing CSV")
-        else:
-            try:
-                self.save_log_preview.set_rows(
-                    [],
-                    [],
-                    summary=f"CSV will be created on Save / Ctrl+S → {suggested_csv}",
-                    csv_path="",
-                )
-            except Exception:
-                pass
+        for i, p in enumerate(selected):
+            self._load_cam(i, p, refresh_metadata=False)
+
+        # v6.4: a newly opened 3-video set should define the actor/action.
+        # Do not keep stale act01 metadata when the selected filenames are act02.
+        self._refresh_actor_action_from_paths(selected, force=True)
+        self._refresh_suggested_csv_path(summary_prefix="Loaded existing CSV for current video set")
         self.select_cam(0)
         self._update_all_status()
 
@@ -2873,28 +3091,14 @@ class AnnotationApp(QMainWindow):
         )
         if path:
             self._remember_dir("last_video_dir", path)
-            self._load_cam(idx, path)
-            # v4.4: update the suggested CSV path after replacing a camera,
-            # but never create the CSV file until Save / Ctrl+S.
-            suggested_csv = self._suggested_csv_path_for_current_state()
-            self.csv_path_manually_selected = False
-            self.edit_csv.setText(suggested_csv)
-            self._remember_dir("last_csv_dir", suggested_csv)
-            if os.path.exists(suggested_csv):
-                self._refresh_full_csv_preview_from_disk(suggested_csv, summary_prefix="Loaded existing CSV")
-            else:
-                try:
-                    self.save_log_preview.set_rows(
-                        [],
-                        [],
-                        summary=f"CSV will be created on Save / Ctrl+S → {suggested_csv}",
-                        csv_path="",
-                    )
-                except Exception:
-                    pass
+            self._load_cam(idx, path, refresh_metadata=True)
+            # v6.3: replacing any camera with Sxx_actYY_* switches the current
+            # video set metadata and CSV target to that new action. Sync is reset
+            # automatically, so accidental mixed-set saving is prevented.
+            self._refresh_suggested_csv_path(summary_prefix="Loaded existing CSV for current video set")
             self._update_all_status()
 
-    def _load_cam(self, idx: int, path: str):
+    def _load_cam(self, idx: int, path: str, refresh_metadata: bool = True):
         old = self.cams[idx]
         cap = open_video_capture(path)
         if not cap.isOpened():
@@ -2926,13 +3130,12 @@ class AnnotationApp(QMainWindow):
         self._set_field(f"cam{idx+1}_device", defaults["device"])
         self._set_field(f"cam{idx+1}_framing", meta.get("framing") or defaults["framing"])
 
-        # v6.0: automatically fill required metadata from the first loaded
-        # video filename, e.g. S01_A01_YR0.mp4 -> actor_id=S01, session_id=A01.
-        # Do not overwrite a value the user already typed manually.
-        if meta.get("session_id") and not self._get_field("session_id"):
-            self._set_field("session_id", normalize_session_id(meta["session_id"]))
-        if meta.get("actor_id") and not self._get_field("actor_id"):
-            self._set_field("actor_id", normalize_actor_id(meta["actor_id"]))
+        # v6.4: when a new action video is loaded, metadata from the filename
+        # should replace the previous action's values. Otherwise act02 videos can
+        # keep saving into the stale act01 CSV. open_three_videos() refreshes once
+        # after all three files are loaded; open_single_video() refreshes here.
+        if refresh_metadata:
+            self._refresh_actor_action_from_paths([path], force=True)
         self.show_frame(idx, 0)
 
     # --------------------------------------------------------
@@ -3546,7 +3749,10 @@ class AnnotationApp(QMainWindow):
             updates["framing"] = self._get_field(f"cam{cam_idx}_framing")
             yaw = self._get_field(f"cam{cam_idx}_yaw")
             if yaw:
-                updates["yaw_label"] = yaw
+                view_set = _infer_view_set_from_paths([getattr(self, "last_save_csv_path", "") or self.edit_csv.text().strip()])
+                if not view_set:
+                    view_set = _infer_view_set_from_yaw_labels([self._get_field(f"cam{i+1}_yaw") for i in range(len(self.cams))])
+                updates["yaw_label"] = make_annotation_yaw_label(yaw, view_set)
         return updates
 
     def handle_csv_preview_item_changed(self, item):
@@ -3779,6 +3985,10 @@ class AnnotationApp(QMainWindow):
             if self.annot_end_offset <= self.annot_start_offset:
                 QMessageBox.warning(self, "Warning", "End offset must be greater than Start offset.")
                 return
+        # v6.4: just before saving, refresh actor/action from the loaded video
+        # filenames one more time. This guarantees that a newly loaded act02 set
+        # cannot be accidentally appended to the previous act01 CSV.
+        self._refresh_actor_action_from_paths([c.path for c in self.cams if c.path], force=True)
         if not self._validate_required_metadata():
             return
         # v4.5: enforce the corrected semantics in the UI/CSV as well.
@@ -3787,14 +3997,25 @@ class AnnotationApp(QMainWindow):
         self._set_field("session_id", normalize_session_id(self._get_field("session_id")))
         csv_path = self.edit_csv.text().strip()
         if (not csv_path) or (not getattr(self, "csv_path_manually_selected", False)):
-            # v4.4: no Auto CSV file creation during loading. The suggested
-            # path is recomputed here, after required metadata is available,
-            # so filenames become S01_act01_multi_view.csv using
-            # actor_id=S01 and session_id=act01 typed later.
+            # v6.1: no Auto CSV file creation during loading. The suggested
+            # path is recomputed here after required metadata is available.
+            # The annotation folder follows the source video folder (fhp/nhp),
+            # not the currently selected interval-level posture dropdown.
             csv_path = default_csv_path([c.path for c in self.cams], self._get_field("actor_id"), self._get_field("session_id"), self._get_field("posture"))
             self.edit_csv.setText(csv_path)
         if csv_path:
             self._remember_dir("last_csv_dir", csv_path)
+
+        source_group = _infer_source_annotation_group_from_paths([c.path for c in self.cams])
+        if source_group == "mixed":
+            QMessageBox.warning(
+                self,
+                "Mixed source folders",
+                "Loaded camera videos contain both fhp and nhp source folders.\n\n"
+                "Use videos from one source group for a single synchronized set, "
+                "or choose a CSV path manually."
+            )
+            return
 
         if self.chk_one_person.isChecked():
             self._set_combo("num_persons", "1")
