@@ -31,7 +31,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-APP_VERSION = "v6.4 FIX SUBJECT TOKEN REFRESH"
+APP_VERSION = "v6.5 FIX SOURCE GROUP DETECTION"
 APP_TITLE = f"FHP GUI - {APP_VERSION}"
 
 
@@ -1474,12 +1474,22 @@ def posture_to_annotation_subdir(posture: str) -> str:
 def _infer_source_annotation_group_from_paths(paths: List[str]) -> str:
     """Infer the CSV folder from the source video tree.
 
-    User's intended dataset semantics:
-      - The source folder `fhp`/`nhp` describes the capture group of the video set.
-      - The CSV row's `posture` column describes the actual labeled time segment.
+    IMPORTANT v6.5 fix:
+    The old exact-component check still had one subtle failure case. If the
+    project/repository directory itself was named `fhp`, e.g.
 
-    Therefore a segment labeled `posture=fhp` inside an `nhp` source video must
-    still be appended to `annotations/nhp/<subject_action_set>_multi_view.csv`.
+        .../Desktop/fhp/video_data_FHP/Rset/y0/nhp/S01_act01_YR0.mp4
+
+    the path contained both an ancestor component `fhp` and the actual source
+    group `nhp`, so the GUI incorrectly reported a mixed fhp/nhp set.
+
+    This function now determines the source group only from the dataset-local
+    video tree. In priority order:
+      1) components after the dataset root `video_data_FHP`
+      2) components after the last view/yaw folder such as y0, yR45, yR90
+      3) fallback to the deepest exact component named fhp/nhp
+
+    It therefore ignores unrelated ancestor folders named `fhp`.
 
     Returns:
         "fhp"   when all loaded video paths belong to an fhp source folder
@@ -1487,21 +1497,71 @@ def _infer_source_annotation_group_from_paths(paths: List[str]) -> str:
         "mixed" when loaded camera paths contain both source groups
         ""      when the source group cannot be inferred
     """
+
+    def _is_group(part: str) -> str:
+        pp = (part or "").strip().lower()
+        if pp in {"fhp", "forward_head_posture"}:
+            return "fhp"
+        if pp in {"nhp", "normal", "normal_head_posture"}:
+            return "nhp"
+        return ""
+
+    def _is_yaw_or_view_part(part: str) -> bool:
+        pp = (part or "").strip()
+        return _path_has_yaw_token(pp) or _path_has_viewset_token(pp)
+
     groups = set()
     for p in paths:
         if not p:
             continue
         try:
-            parts = [str(part).strip().lower() for part in Path(os.path.abspath(str(p))).parts]
+            parts = [str(part).strip() for part in Path(os.path.abspath(str(p))).parts]
         except Exception:
             parts = []
-        for part in parts:
-            # Match exact folder names only. This avoids treating `video_data_FHP`
-            # itself as an `fhp` source-group folder.
-            if part in {"fhp", "forward_head_posture"}:
-                groups.add("fhp")
-            elif part in {"nhp", "normal", "normal_head_posture"}:
-                groups.add("nhp")
+        if not parts:
+            continue
+
+        lowered = [part.lower() for part in parts]
+
+        # 1) Prefer the dataset-local subtree after video_data_FHP. This avoids
+        # treating parent folders like .../Desktop/fhp/... as a source label.
+        search_parts = parts
+        if "video_data_fhp" in lowered:
+            idx = lowered.index("video_data_fhp")
+            search_parts = parts[idx + 1:]
+
+        # 2) If there is a yaw/view component, the real source group normally
+        # appears after it: Rset/y0/nhp/file.mp4. Use only the tail after the
+        # last such component to avoid older naming tokens elsewhere.
+        last_yaw_or_view_idx = None
+        for i, part in enumerate(search_parts):
+            if _is_yaw_or_view_part(part):
+                last_yaw_or_view_idx = i
+        if last_yaw_or_view_idx is not None:
+            tail = search_parts[last_yaw_or_view_idx + 1:]
+        else:
+            tail = search_parts
+
+        # Prefer the deepest group-like folder in the relevant tail. Deepest is
+        # closest to the file and therefore most likely to be the source group.
+        group = ""
+        for part in reversed(tail):
+            group = _is_group(part)
+            if group:
+                break
+
+        # 3) Fallback: when no dataset root/yaw folder exists, use the deepest
+        # exact fhp/nhp component in the entire path. This preserves backward
+        # compatibility with older layouts.
+        if not group:
+            for part in reversed(parts):
+                group = _is_group(part)
+                if group:
+                    break
+
+        if group:
+            groups.add(group)
+
     if len(groups) == 1:
         return next(iter(groups))
     if len(groups) > 1:
